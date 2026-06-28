@@ -38,7 +38,9 @@ allowed_origins = [
     "http://localhost:3000",
     "http://localhost:5000",
     "https://primekey-finance.web.app",
-    "https://primekeyapp-49jj.onrender.com"
+    "https://primekeyapp-49jj.onrender.com",
+    "https://primekeyfinance.com",
+    "https://www.primekeyfinance.com"
 ]
 app.add_middleware(
     CORSMiddleware,
