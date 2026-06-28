@@ -99,11 +99,41 @@ def build_html_email(subject: str, content: str) -> str:
     html_paragraphs = []
     for p in paragraphs:
         formatted_p = p.replace('\n', '<br>')
-        html_paragraphs.append(f"<p style='margin: 0 0 16px 0; color: #374151;'>{formatted_p}</p>")
+        html_paragraphs.append(f"<p style='margin: 0 0 16px 0; color: #4b5563; font-size: 15px;'>{formatted_p}</p>")
     
     html_body = '\n'.join(html_paragraphs)
     current_year = datetime.now().year
     
+    # Check if we should render a CTA button
+    show_button = False
+    btn_text = "Go to Dashboard"
+    if "Welcome" in subject or "Approved" in subject or "Received" in subject or "Verification" in subject:
+        show_button = True
+        if "Approved" in subject:
+            btn_text = "Review & Sign Agreement"
+        elif "Welcome" in subject:
+            btn_text = "Get Started"
+            
+    cta_html = ""
+    if show_button:
+        cta_html = f"""
+        <div style="text-align: center; margin: 35px 0 15px 0;">
+          <a href="https://primekeyfinance.com" target="_blank" style="
+            display: inline-block;
+            padding: 14px 30px;
+            background-color: #023428;
+            color: #ffffff !important;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 14px;
+            letter-spacing: 0.5px;
+            border: 2px solid #be8c2a;
+            box-shadow: 0 4px 6px rgba(2, 52, 40, 0.15);
+          ">{btn_text}</a>
+        </div>
+        """
+        
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -122,28 +152,26 @@ def build_html_email(subject: str, content: str) -> str:
       max-width: 580px;
       margin: 30px auto;
       background: #ffffff;
-      border-radius: 12px;
+      border-radius: 16px;
       border: 1px solid #e5e7eb;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.03);
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
       overflow: hidden;
     }}
     .header {{
       background-color: #023428;
-      padding: 32px 24px;
+      padding: 35px 24px;
       text-align: center;
-      border-bottom: 4px solid #be8c2a;
+      border-bottom: 5px solid #be8c2a;
     }}
     .header h1 {{
-      color: #ffffff;
       margin: 0;
-      font-size: 22px;
+      font-size: 24px;
       font-weight: 800;
-      letter-spacing: 1.5px;
+      letter-spacing: 2px;
     }}
     .body-content {{
       padding: 40px 32px;
-      line-height: 1.6;
-      font-size: 15px;
+      line-height: 1.7;
     }}
     .footer {{
       background-color: #f9fafb;
@@ -157,17 +185,23 @@ def build_html_email(subject: str, content: str) -> str:
     .footer a {{
       color: #023428;
       text-decoration: underline;
-      font-weight: 500;
+      font-weight: 600;
     }}
   </style>
 </head>
 <body>
   <div class="email-container">
     <div class="header">
-      <h1>PRIMEKEY FINANCE</h1>
+      <h1>
+        <span style="color: #ffffff;">PRIME</span><span style="color: #be8c2a;">KEY</span>
+      </h1>
+      <div style="color: #be8c2a; font-size: 11px; letter-spacing: 3px; margin-top: 5px; font-weight: 600; text-transform: uppercase;">
+        &mdash; Credit Financial &mdash;
+      </div>
     </div>
     <div class="body-content">
       {html_body}
+      {cta_html}
     </div>
     <div class="footer">
       &copy; {current_year} Primekey Finance. All rights reserved.<br>
