@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Header, Request
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -11,6 +11,8 @@ from generator import generate_agreement
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 import smtplib
+import imaplib
+import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -219,7 +221,7 @@ def build_html_email(subject: str, content: str) -> str:
 </html>
 """
 
-def send_smtp_email(to_email: str, subject: str, html_content: str, plain_content: str):
+def send_smtp_email(to_email: str, subject: str, html_content: str, plain_content: str) -> bytes:
     smtp_host = os.getenv("SMTP_HOST", "smtp.hostinger.com")
     smtp_port = int(os.getenv("SMTP_PORT", "465"))
     smtp_user = os.getenv("SMTP_USER")
@@ -237,15 +239,19 @@ def send_smtp_email(to_email: str, subject: str, html_content: str, plain_conten
     msg.attach(MIMEText(plain_content, 'plain'))
     msg.attach(MIMEText(html_content, 'html'))
 
+    msg_bytes = msg.as_bytes()
+
     if smtp_port == 465:
         with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
             server.login(smtp_user, smtp_password)
-            server.sendmail(sender_email, to_email, msg.as_string())
+            server.sendmail(sender_email, to_email, msg_bytes)
     else:
         with smtplib.SMTP(smtp_host, smtp_port) as server:
             server.starttls()
             server.login(smtp_user, smtp_password)
-            server.sendmail(sender_email, to_email, msg.as_string())
+            server.sendmail(sender_email, to_email, msg_bytes)
+            
+    return msg_bytes
 
 def build_structured_email(data: EmailRequest) -> str:
     first_name = data.full_name.split(' ')[0] if data.full_name else "Client"
@@ -437,9 +443,48 @@ def build_structured_email(data: EmailRequest) -> str:
 </html>
 """
 
+def append_to_imap_sent(msg_bytes: bytes):
+    imap_host = os.getenv("IMAP_HOST", "imap.hostinger.com")
+    imap_port = int(os.getenv("IMAP_PORT", "993"))
+    imap_user = os.getenv("SMTP_USER")
+    imap_password = os.getenv("SMTP_PASSWORD")
+
+    if not imap_user or not imap_password:
+        print("IMAP sync skipped: credentials not set.")
+        return
+
+    try:
+        mail = imaplib.IMAP4_SSL(imap_host, imap_port)
+        mail.login(imap_user, imap_password)
+
+        common_sent_folders = ["Sent", "Sent Items", "INBOX.Sent"]
+        folder = "Sent"
+        selected = False
+
+        for f in common_sent_folders:
+            try:
+                status, data = mail.select(f)
+                if status == 'OK':
+                    folder = f
+                    selected = True
+                    break
+            except Exception:
+                continue
+
+        if not selected:
+            folder = "Sent"
+            mail.create(folder)
+            mail.select(folder)
+
+        mail.append(folder, '\\Seen', imaplib.Time2Internaldate(time.time()), msg_bytes)
+        mail.logout()
+        print(f"Successfully synced sent email to IMAP folder '{folder}'")
+    except Exception as e:
+        print(f"IMAP Sync failed: {str(e)}")
+
 @app.post("/send-notification-email")
 @limiter.limit("3/minute")
-async def send_email(request: Request, data: EmailRequest, user=Depends(verify_token)):
+async def send_email(request: Request, data: EmailRequest, background_tasks: BackgroundTasks, user=Depends(verify_token)):
     if data.status in ["approved", "rejected"]:
         html_content = build_structured_email(data)
     else:
@@ -449,7 +494,8 @@ async def send_email(request: Request, data: EmailRequest, user=Depends(verify_t
     smtp_user = os.getenv("SMTP_USER")
     if smtp_user:
         try:
-            send_smtp_email(data.to_email, data.subject, html_content, data.content)
+            msg_bytes = send_smtp_email(data.to_email, data.subject, html_content, data.content)
+            background_tasks.add_task(append_to_imap_sent, msg_bytes)
             return {"status": "success", "message": "Email sent via SMTP"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"SMTP email failed: {str(e)}")
