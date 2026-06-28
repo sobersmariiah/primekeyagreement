@@ -6,15 +6,19 @@ import io
 import os
 import json
 import firebase_admin
-from firebase_admin import credentials, auth
+from firebase_admin import credentials, auth, firestore
 from generator import generate_agreement
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 import smtplib
 import imaplib
 import time
+import math
+from datetime import timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+import base64
 
 # Rate limiting
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -221,7 +225,7 @@ def build_html_email(subject: str, content: str) -> str:
 </html>
 """
 
-def send_smtp_email(to_email: str, subject: str, html_content: str, plain_content: str) -> bytes:
+def send_smtp_email(to_email: str, subject: str, html_content: str, plain_content: str, attachment_bytes: bytes = None, attachment_filename: str = None) -> bytes:
     smtp_host = os.getenv("SMTP_HOST", "smtp.hostinger.com")
     smtp_port = int(os.getenv("SMTP_PORT", "465"))
     smtp_user = os.getenv("SMTP_USER")
@@ -231,13 +235,24 @@ def send_smtp_email(to_email: str, subject: str, html_content: str, plain_conten
     if not smtp_user or not smtp_password:
         raise ValueError("SMTP credentials not configured")
 
-    msg = MIMEMultipart('alternative')
+    if attachment_bytes and attachment_filename:
+        msg = MIMEMultipart('mixed')
+        alt_part = MIMEMultipart('alternative')
+        alt_part.attach(MIMEText(plain_content, 'plain'))
+        alt_part.attach(MIMEText(html_content, 'html'))
+        msg.attach(alt_part)
+        
+        file_part = MIMEApplication(attachment_bytes, Name=attachment_filename)
+        file_part['Content-Disposition'] = f'attachment; filename="{attachment_filename}"'
+        msg.attach(file_part)
+    else:
+        msg = MIMEMultipart('alternative')
+        msg.attach(MIMEText(plain_content, 'plain'))
+        msg.attach(MIMEText(html_content, 'html'))
+
     msg['From'] = sender_email
     msg['To'] = to_email
     msg['Subject'] = subject
-
-    msg.attach(MIMEText(plain_content, 'plain'))
-    msg.attach(MIMEText(html_content, 'html'))
 
     msg_bytes = msg.as_bytes()
 
@@ -482,6 +497,110 @@ def append_to_imap_sent(msg_bytes: bytes):
     except Exception as e:
         print(f"IMAP Sync failed: {str(e)}")
 
+def get_loan_rate(country_code: str, duration: int) -> float:
+    default_rates = {
+        3: 15.0, 6: 15.0, 12: 12.0, 18: 12.0, 24: 10.0, 36: 10.0, 
+        48: 8.0, 60: 8.0, 72: 7.0, 84: 7.0, 96: 6.0, 108: 6.0, 120: 5.0
+    }
+    localized_rates = {
+        "US": {
+            3: 15.0, 6: 15.0, 12: 12.0, 18: 12.0, 24: 10.0, 36: 10.0, 
+            48: 8.0, 60: 8.0, 72: 7.0, 84: 7.0, 96: 6.0, 108: 6.0, 120: 5.0
+        },
+        "ZA": {
+            3: 28.0, 6: 28.0, 12: 24.0, 18: 24.0, 24: 22.0, 36: 22.0, 
+            48: 20.0, 60: 20.0, 72: 18.0, 84: 18.0, 96: 18.0, 108: 16.0, 120: 14.0
+        },
+        "BZ": {
+            3: 24.0, 6: 24.0, 12: 20.0, 18: 20.0, 24: 18.0, 36: 18.0, 
+            48: 16.0, 60: 16.0, 72: 15.0, 84: 14.0, 96: 14.0, 108: 12.0, 120: 10.0
+        }
+    }
+    rates = localized_rates.get(country_code, default_rates)
+    return rates.get(duration, 12.0)
+
+def calculate_monthly_payment(amount: float, annual_rate: float, months: int) -> float:
+    monthly_rate = annual_rate / 12 / 100
+    if monthly_rate == 0:
+        return round(amount / months, 2)
+    monthly = (amount * monthly_rate * math.pow(1 + monthly_rate, months)) / (math.pow(1 + monthly_rate, months) - 1)
+    return round(monthly, 2)
+
+def get_currency_symbol(country_code: str) -> str:
+    symbols = {
+        "BZ": "BZ$",
+        "ZA": "R",
+        "US": "$",
+        "CA": "CA$",
+        "GB": "£",
+        "EU": "€"
+    }
+    return symbols.get(country_code, "$")
+
+def get_loan_agreement_pdf(reference_no: str) -> bytes:
+    try:
+        db = firestore.client()
+        doc_ref = db.collection('loan_applications').document(reference_no)
+        doc = doc_ref.get()
+        if not doc.exists:
+            print(f"Loan application document {reference_no} not found in Firestore.")
+            return None
+            
+        app_data = doc.to_dict()
+        user_id = app_data.get('userId')
+        
+        user_data = {}
+        if user_id:
+            user_doc_ref = db.collection('users').document(user_id)
+            user_doc = user_doc_ref.get()
+            if user_doc.exists:
+                user_data = user_doc.to_dict()
+                
+        client_name = user_data.get('fullName', app_data.get('fullName', 'Client'))
+        loan_amount = float(app_data.get('loanAmount', 0.0))
+        loan_duration = int(app_data.get('loanDuration', 12))
+        country_code = app_data.get('countryCode', 'BZ')
+        
+        interest_rate = get_loan_rate(country_code, loan_duration)
+        monthly_payment = calculate_monthly_payment(loan_amount, interest_rate, loan_duration)
+        
+        today = datetime.now()
+        agreement_date = today.strftime("%B %d, %Y")
+        
+        first_payment = today + timedelta(days=60)
+        first_payment_date = first_payment.strftime("%Y-%m-%d")
+        
+        currency_symbol = get_currency_symbol(country_code)
+        
+        class LoanData:
+            def __init__(self, clientName, loanAmount, annualRatePct, loanTermMonths, monthlyPayment, firstPaymentDate, agreementDate, referenceNo, currencySymbol):
+                self.clientName = clientName
+                self.loanAmount = loanAmount
+                self.annualRatePct = annualRatePct
+                self.loanTermMonths = loanTermMonths
+                self.monthlyPayment = monthlyPayment
+                self.firstPaymentDate = firstPaymentDate
+                self.agreementDate = agreementDate
+                self.referenceNo = referenceNo
+                self.currencySymbol = currencySymbol
+                
+        loan_obj = LoanData(
+            clientName=client_name,
+            loanAmount=loan_amount,
+            annualRatePct=interest_rate,
+            loanTermMonths=loan_duration,
+            monthlyPayment=monthly_payment,
+            firstPaymentDate=first_payment_date,
+            agreementDate=agreement_date,
+            referenceNo=reference_no,
+            currencySymbol=currency_symbol
+        )
+        
+        return generate_agreement(loan_obj)
+    except Exception as e:
+        print(f"Failed to generate loan agreement PDF in backend: {e}")
+        return None
+
 @app.post("/send-notification-email")
 @limiter.limit("3/minute")
 async def send_email(request: Request, data: EmailRequest, background_tasks: BackgroundTasks, user=Depends(verify_token)):
@@ -490,11 +609,26 @@ async def send_email(request: Request, data: EmailRequest, background_tasks: Bac
     else:
         html_content = build_html_email(data.subject, data.content)
 
+    attachment_bytes = None
+    attachment_filename = None
+    
+    if data.status == "approved" and data.reference_no:
+        attachment_bytes = get_loan_agreement_pdf(data.reference_no)
+        if attachment_bytes:
+            attachment_filename = f"agreement_{data.reference_no}.pdf"
+
     # 1. Try SMTP if user has configured it
     smtp_user = os.getenv("SMTP_USER")
     if smtp_user:
         try:
-            msg_bytes = send_smtp_email(data.to_email, data.subject, html_content, data.content)
+            msg_bytes = send_smtp_email(
+                to_email=data.to_email, 
+                subject=data.subject, 
+                html_content=html_content, 
+                plain_content=data.content,
+                attachment_bytes=attachment_bytes,
+                attachment_filename=attachment_filename
+            )
             background_tasks.add_task(append_to_imap_sent, msg_bytes)
             return {"status": "success", "message": "Email sent via SMTP"}
         except Exception as e:
@@ -513,6 +647,20 @@ async def send_email(request: Request, data: EmailRequest, background_tasks: Bac
         subject=data.subject,
         html_content=html_content
     )
+    
+    if attachment_bytes and attachment_filename:
+        try:
+            encoded_pdf = base64.b64encode(attachment_bytes).decode()
+            attached_file = Attachment(
+                FileContent(encoded_pdf),
+                FileName(attachment_filename),
+                FileType('application/pdf'),
+                Disposition('attachment')
+            )
+            message.add_attachment(attached_file)
+        except Exception as e:
+            print(f"Failed to attach PDF to SendGrid message: {e}")
+            
     try:
         sg = SendGridAPIClient(sg_key)
         sg.send(message)
