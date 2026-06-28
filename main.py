@@ -10,6 +10,9 @@ from firebase_admin import credentials, auth
 from generator import generate_agreement
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # Rate limiting
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -89,17 +92,50 @@ async def generate(request: Request, data: LoanRequest, user=Depends(verify_toke
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def send_smtp_email(to_email: str, subject: str, content: str):
+    smtp_host = os.getenv("SMTP_HOST", "smtp.hostinger.com")
+    smtp_port = int(os.getenv("SMTP_PORT", "465"))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    sender_email = os.getenv("SMTP_FROM_EMAIL", smtp_user)
+
+    if not smtp_user or not smtp_password:
+        raise ValueError("SMTP credentials not configured")
+
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = to_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(content, 'plain'))
+
+    if smtp_port == 465:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
+            server.login(smtp_user, smtp_password)
+            server.sendmail(sender_email, to_email, msg.as_string())
+    else:
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.sendmail(sender_email, to_email, msg.as_string())
+
 @app.post("/send-notification-email")
 @limiter.limit("3/minute")
 async def send_email(request: Request, data: EmailRequest, user=Depends(verify_token)):
-    # Only allow admins to send generic notification emails, 
-    # or implement logic to allow users to trigger specific transactional ones.
-    
+    # 1. Try SMTP if user has configured it
+    smtp_user = os.getenv("SMTP_USER")
+    if smtp_user:
+        try:
+            send_smtp_email(data.to_email, data.subject, data.content)
+            return {"status": "success", "message": "Email sent via SMTP"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"SMTP email failed: {str(e)}")
+
+    # 2. Fallback to SendGrid
     sg_key = os.getenv('SENDGRID_API_KEY')
     sender = os.getenv('SENDGRID_SENDER_EMAIL', 'noreply@primekey-finance.com')
     
     if not sg_key:
-        raise HTTPException(status_code=500, detail="Email service not configured")
+        raise HTTPException(status_code=500, detail="Email service not configured. Please set SMTP_USER or SENDGRID_API_KEY.")
 
     message = Mail(
         from_email=sender,
@@ -110,9 +146,9 @@ async def send_email(request: Request, data: EmailRequest, user=Depends(verify_t
     try:
         sg = SendGridAPIClient(sg_key)
         sg.send(message)
-        return {"status": "success", "message": "Email sent"}
+        return {"status": "success", "message": "Email sent via SendGrid"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"SendGrid email failed: {str(e)}")
 
 @app.get("/")
 def root():
