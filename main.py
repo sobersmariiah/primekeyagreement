@@ -286,6 +286,26 @@ def build_structured_email(data: EmailRequest) -> str:
           <p class="reason-content">{reason_val}</p>
         </div>
         """
+    elif data.status == "submitted":
+        banner_bg = "#1e293b"
+        banner_color = "#3b82f6"
+        alert_title = "Application Received"
+        intro_text = "Thank you for applying for a loan with Primekey Finance. We have successfully received your application. Our underwriting team will review it shortly."
+        closing_text = "You can monitor the status of your application from your user dashboard at any time. If you have any questions, please don't hesitate to contact us."
+        reason_html = ""
+    elif data.status == "kyc_rejected":
+        banner_bg = "#2d1f1f"
+        banner_color = "#f87171"
+        alert_title = "KYC Verification Rejected"
+        intro_text = "Unfortunately, your identity verification (KYC) documents could not be approved at this time."
+        closing_text = "Please log in to your dashboard to re-upload clear and correct documents. If you have any questions, please don't hesitate to contact us."
+        reason_val = data.reason if (data.reason and data.reason.strip().lower() != "null") else "No specific reason provided."
+        reason_html = f"""
+        <div class="reason-box">
+          <h3 class="reason-title">Reason for Rejection:</h3>
+          <p class="reason-content">{reason_val}</p>
+        </div>
+        """
     else:  # approved
         banner_bg = "#1f2d24"
         banner_color = "#4ade80"
@@ -604,7 +624,7 @@ def get_loan_agreement_pdf(reference_no: str) -> bytes:
 @app.post("/send-notification-email")
 @limiter.limit("3/minute")
 async def send_email(request: Request, data: EmailRequest, background_tasks: BackgroundTasks, user=Depends(verify_token)):
-    if data.status in ["approved", "rejected"]:
+    if data.status in ["approved", "rejected", "submitted", "kyc_rejected"]:
         html_content = build_structured_email(data)
     else:
         html_content = build_html_email(data.subject, data.content)
