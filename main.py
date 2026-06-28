@@ -69,6 +69,13 @@ class EmailRequest(BaseModel):
     to_email: str
     subject: str
     content: str
+    status: str = None
+    full_name: str = None
+    reference_no: str = None
+    loan_amount: str = None
+    monthly_repayment: str = None
+    duration: str = None
+    reason: str = None
 
 async def verify_token(authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
@@ -240,10 +247,203 @@ def send_smtp_email(to_email: str, subject: str, html_content: str, plain_conten
             server.login(smtp_user, smtp_password)
             server.sendmail(sender_email, to_email, msg.as_string())
 
+def build_structured_email(data: EmailRequest) -> str:
+    first_name = data.full_name.split(' ')[0] if data.full_name else "Client"
+    current_year = datetime.now().year
+    
+    if data.status == "rejected":
+        banner_bg = "#2d1f1f"
+        banner_color = "#f87171"
+        alert_title = "Application Not Approved"
+        intro_text = "Thank you for applying for a loan with Primekey Finance. After careful review, we regret to inform you that your application has not been approved at this time."
+        closing_text = "This decision does not prevent you from applying again in the future. If you have any questions or would like to discuss your application, please don't hesitate to contact us."
+        
+        reason_val = data.reason if (data.reason and data.reason.strip().lower() != "null") else "No specific reason provided."
+        reason_html = f"""
+        <div class="reason-box">
+          <h3 class="reason-title">Reason:</h3>
+          <p class="reason-content">{reason_val}</p>
+        </div>
+        """
+    else:  # approved
+        banner_bg = "#1f2d24"
+        banner_color = "#4ade80"
+        alert_title = "Application Approved!"
+        intro_text = "We are pleased to inform you that your loan application has been approved. Below are the details of your loan agreement."
+        closing_text = "Please log in to your dashboard to review and sign your loan agreement contract to finalize the payout. If you have any questions, please don't hesitate to contact us."
+        
+        reason_html = ""
+        if data.reason and data.reason.strip().lower() != "null":
+            reason_html = f"""
+            <div class="reason-box">
+              <h3 class="reason-title">Officer Remarks:</h3>
+              <p class="reason-content">{data.reason}</p>
+            </div>
+            """
+            
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{data.subject}</title>
+  <style>
+    body {{
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: #111827;
+      color: #f3f4f6;
+      -webkit-font-smoothing: antialiased;
+    }}
+    .email-container {{
+      max-width: 580px;
+      margin: 30px auto;
+      background: #1f2937;
+      border-radius: 16px;
+      border: 1px solid #374151;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }}
+    .header {{
+      background-color: #023428;
+      padding: 35px 24px;
+      text-align: center;
+      border-bottom: 5px solid #be8c2a;
+    }}
+    .header h1 {{
+      margin: 0;
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: 2px;
+    }}
+    .body-content {{
+      padding: 40px 32px;
+      line-height: 1.7;
+    }}
+    .alert-banner {{
+      padding: 20px;
+      background-color: {banner_bg};
+      border-left: 4px solid {banner_color};
+      border-radius: 8px;
+      margin-bottom: 30px;
+    }}
+    .alert-title {{
+      font-size: 18px;
+      font-weight: 700;
+      color: {banner_color};
+      margin: 0 0 4px 0;
+    }}
+    .alert-subtitle {{
+      font-size: 13px;
+      color: #9ca3af;
+      margin: 0;
+      word-break: break-all;
+    }}
+    .details-card {{
+      background-color: #111827;
+      border: 1px solid #374151;
+      border-radius: 12px;
+      padding: 24px;
+      margin: 30px 0;
+    }}
+    .reason-box {{
+      padding: 20px;
+      background-color: #27211a;
+      border-left: 4px solid #be8c2a;
+      border-radius: 8px;
+      margin: 30px 0;
+    }}
+    .reason-title {{
+      font-size: 14px;
+      font-weight: 700;
+      color: #be8c2a;
+      margin: 0;
+    }}
+    .reason-content {{
+      font-size: 14px;
+      color: #d1d5db;
+      margin: 4px 0 0 0;
+    }}
+    .footer {{
+      background-color: #111827;
+      padding: 24px 32px;
+      text-align: center;
+      font-size: 12px;
+      color: #9ca3af;
+      border-top: 1px solid #374151;
+      line-height: 1.5;
+    }}
+    .footer a {{
+      color: #be8c2a;
+      text-decoration: underline;
+      font-weight: 600;
+    }}
+  </style>
+</head>
+<body>
+  <div class="email-container">
+    <div class="header">
+      <h1>
+        <span style="color: #ffffff;">PRIME</span><span style="color: #be8c2a;">KEY</span>
+      </h1>
+      <div style="color: #be8c2a; font-size: 11px; letter-spacing: 3px; margin-top: 5px; font-weight: 600; text-transform: uppercase;">
+        &mdash; Credit Financial &mdash;
+      </div>
+    </div>
+    <div class="body-content">
+      <div class="alert-banner">
+        <h2 class="alert-title">{alert_title}</h2>
+        <p class="alert-subtitle">Reference: {data.reference_no}</p>
+      </div>
+      
+      <p style="color: #d1d5db; font-size: 15px; margin: 0 0 20px 0;">Dear {first_name},</p>
+      <p style="color: #d1d5db; font-size: 15px; margin: 0 0 24px 0;">{intro_text}</p>
+      
+      <div class="details-card">
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr style="height: 35px;">
+            <td style="width: 150px; color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Full Name</td>
+            <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.full_name}</td>
+          </tr>
+          <tr style="height: 35px;">
+            <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Reference No.</td>
+            <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0; word-break: break-all;">{data.reference_no}</td>
+          </tr>
+          <tr style="height: 35px;">
+            <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Loan Amount</td>
+            <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.loan_amount}</td>
+          </tr>
+          <tr style="height: 35px;">
+            <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Monthly Repayment</td>
+            <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.monthly_repayment}</td>
+          </tr>
+          <tr style="height: 35px;">
+            <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Duration</td>
+            <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.duration}</td>
+          </tr>
+        </table>
+      </div>
+      
+      {reason_html}
+      
+      <p style="color: #d1d5db; font-size: 15px; margin: 24px 0 0 0;">{closing_text}</p>
+    </div>
+    <div class="footer">
+      &copy; {current_year} Primekey Finance. All rights reserved.<br>
+      If you have any questions, contact us at <a href="mailto:finance@primekeyfinance.com">finance@primekeyfinance.com</a>.
+    </div>
+  </div>
+</body>
+</html>
+"""
+
 @app.post("/send-notification-email")
 @limiter.limit("3/minute")
 async def send_email(request: Request, data: EmailRequest, user=Depends(verify_token)):
-    html_content = build_html_email(data.subject, data.content)
+    if data.status in ["approved", "rejected"]:
+        html_content = build_structured_email(data)
+    else:
+        html_content = build_html_email(data.subject, data.content)
 
     # 1. Try SMTP if user has configured it
     smtp_user = os.getenv("SMTP_USER")
