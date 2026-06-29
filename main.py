@@ -82,6 +82,8 @@ class EmailRequest(BaseModel):
     monthly_repayment: str = None
     duration: str = None
     reason: str = None
+    bank_name: str = None
+    account_number: str = None
 
 async def verify_token(authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
@@ -147,6 +149,62 @@ def build_html_email(subject: str, content: str) -> str:
         </div>
         """
         
+
+    # Build dynamic table
+    table_html = ""
+    if data.status and data.status.startswith("withdrawal_"):
+        table_html = f'''
+        <div class="details-card">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr style="height: 35px;">
+              <td style="width: 150px; color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Full Name</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.full_name or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Amount</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.loan_amount or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Bank</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.bank_name or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Account No.</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.account_number or "N/A"}</td>
+            </tr>
+          </table>
+        </div>
+        '''
+    elif data.status and data.status.startswith("bank_"):
+        pass # No table for bank verification
+    else:
+        table_html = f'''
+        <div class="details-card">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr style="height: 35px;">
+              <td style="width: 150px; color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Full Name</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.full_name or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Reference No.</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0; word-break: break-all;">{data.reference_no or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Loan Amount</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.loan_amount or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Monthly Repayment</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.monthly_repayment or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Duration</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.duration or "N/A"}</td>
+            </tr>
+          </table>
+        </div>
+        '''
+
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -306,6 +364,55 @@ def build_structured_email(data: EmailRequest) -> str:
           <p class="reason-content">{reason_val}</p>
         </div>
         """
+    elif data.status == "withdrawal_pending":
+        banner_bg = "#1e293b"
+        banner_color = "#3b82f6"
+        alert_title = "Withdrawal Request Received"
+        intro_text = "We have successfully received your withdrawal request. It is currently pending review by our financial team."
+        closing_text = "You can monitor the status of your withdrawal from your user dashboard at any time. We will notify you once it begins processing."
+        reason_html = ""
+    elif data.status == "withdrawal_processing":
+        banner_bg = "#1e3a8a"
+        banner_color = "#60a5fa"
+        alert_title = "Withdrawal Processing"
+        intro_text = "Great news! Your withdrawal request is now being processed. The funds are being routed to your designated bank account."
+        closing_text = "Depending on your bank, it may take 1-3 business days for the funds to reflect in your account. We will notify you once the transfer is fully completed."
+        reason_html = ""
+    elif data.status == "withdrawal_completed":
+        banner_bg = "#1f2d24"
+        banner_color = "#4ade80"
+        alert_title = "Withdrawal Completed!"
+        intro_text = "Your withdrawal has been successfully processed and completed. The funds have been transferred to your bank account."
+        closing_text = "If you do not see the funds in your account within the next 24-48 hours, please contact your bank or reach out to our support team."
+        reason_html = ""
+    elif data.status == "withdrawal_failed":
+        banner_bg = "#2d1f1f"
+        banner_color = "#f87171"
+        alert_title = "Withdrawal Failed"
+        intro_text = "Unfortunately, we encountered an issue while processing your withdrawal request and it has failed."
+        closing_text = "Please check your bank account details or contact our support team for further assistance. The funds have been returned to your Primekey balance."
+        reason_html = ""
+    elif data.status == "bank_pending":
+        banner_bg = "#3f2c00"
+        banner_color = "#eab308"
+        alert_title = "Bank Account Verification Pending"
+        intro_text = "Your bank account status has been updated to Pending. You will soon receive another email with instructions to verify your bank account."
+        closing_text = "Please keep an eye on your inbox for the verification instructions. Thank you for your patience."
+        reason_html = ""
+    elif data.status == "bank_verified":
+        banner_bg = "#1f2d24"
+        banner_color = "#4ade80"
+        alert_title = "Bank Account Verified!"
+        intro_text = "Good news! Your bank account has been successfully verified. You can now use this account for seamless withdrawals."
+        closing_text = "No further action is required for this account."
+        reason_html = ""
+    elif data.status == "bank_rejected":
+        banner_bg = "#2d1f1f"
+        banner_color = "#f87171"
+        alert_title = "Bank Account Rejected"
+        intro_text = "Unfortunately, we were unable to verify your bank account at this time."
+        closing_text = "Please log in to your dashboard to review your account details or add a different bank account."
+        reason_html = ""
     else:  # approved
         banner_bg = "#1f2d24"
         banner_color = "#4ade80"
@@ -322,6 +429,64 @@ def build_structured_email(data: EmailRequest) -> str:
             </div>
             """
             
+
+    # Build dynamic table
+    table_html = ""
+    if data.status and data.status.startswith("withdrawal_"):
+        table_html = f'''
+        <div class="details-card">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr style="height: 35px;">
+              <td style="width: 150px; color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Full Name</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.full_name or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Amount</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.loan_amount or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Bank</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.bank_name or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Account No.</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.account_number or "N/A"}</td>
+            </tr>
+          </table>
+        </div>
+        '''
+    elif data.status and data.status.startswith("bank_"):
+        pass # No table for bank verification
+    elif data.status in ["approved", "rejected", "submitted"]:
+        table_html = f'''
+        <div class="details-card">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr style="height: 35px;">
+              <td style="width: 150px; color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Full Name</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.full_name or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Reference No.</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0; word-break: break-all;">{data.reference_no or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Loan Amount</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.loan_amount or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Monthly Repayment</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.monthly_repayment or "N/A"}</td>
+            </tr>
+            <tr style="height: 35px;">
+              <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Duration</td>
+              <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.duration or "N/A"}</td>
+            </tr>
+          </table>
+        </div>
+        '''
+    else:
+        pass # No table for kyc_rejected, bank verifications, or other statuses
+
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -440,30 +605,7 @@ def build_structured_email(data: EmailRequest) -> str:
       <p style="color: #d1d5db; font-size: 15px; margin: 0 0 20px 0;">Dear {first_name},</p>
       <p style="color: #d1d5db; font-size: 15px; margin: 0 0 24px 0;">{intro_text}</p>
       
-      <div class="details-card">
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr style="height: 35px;">
-            <td style="width: 150px; color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Full Name</td>
-            <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.full_name}</td>
-          </tr>
-          <tr style="height: 35px;">
-            <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Reference No.</td>
-            <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0; word-break: break-all;">{data.reference_no}</td>
-          </tr>
-          <tr style="height: 35px;">
-            <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Loan Amount</td>
-            <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.loan_amount}</td>
-          </tr>
-          <tr style="height: 35px;">
-            <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Monthly Repayment</td>
-            <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.monthly_repayment}</td>
-          </tr>
-          <tr style="height: 35px;">
-            <td style="color: #9ca3af; font-size: 14px; font-weight: 600; padding: 4px 0;">Duration</td>
-            <td style="color: #f3f4f6; font-size: 14px; font-weight: 700; padding: 4px 0;">{data.duration}</td>
-          </tr>
-        </table>
-      </div>
+      {table_html}
       
       {reason_html}
       
@@ -624,7 +766,7 @@ def get_loan_agreement_pdf(reference_no: str) -> bytes:
 @app.post("/send-notification-email")
 @limiter.limit("3/minute")
 async def send_email(request: Request, data: EmailRequest, background_tasks: BackgroundTasks, user=Depends(verify_token)):
-    if data.status in ["approved", "rejected", "submitted", "kyc_rejected"]:
+    if data.status in ["approved", "rejected", "submitted", "kyc_rejected", "withdrawal_pending", "withdrawal_processing", "withdrawal_completed", "withdrawal_failed", "bank_pending", "bank_verified", "bank_rejected"]:
         html_content = build_structured_email(data)
     else:
         html_content = build_html_email(data.subject, data.content)
