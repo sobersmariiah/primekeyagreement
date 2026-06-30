@@ -308,7 +308,7 @@ def send_smtp_email(to_email: str, subject: str, html_content: str, plain_conten
         msg.attach(MIMEText(plain_content, 'plain'))
         msg.attach(MIMEText(html_content, 'html'))
 
-    msg['From'] = f"PrimeKey Support <{sender_email}>"
+    msg['From'] = f"PrimeKey Finance <{sender_email}>"
     msg['To'] = to_email
     msg['Subject'] = subject
 
